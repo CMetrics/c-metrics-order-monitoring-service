@@ -2,7 +2,7 @@ import os
 from datetime import datetime as dt
 
 import pandas as pd
-import sqlalchemy as sql
+import psycopg2
 from dotenv import load_dotenv
 from redis import asyncio as async_redis
 
@@ -16,14 +16,14 @@ REDIS_CON = async_redis.Redis(
 )
 
 
-def get_db_connection(local: bool) -> sql.Engine:
-    user = os.getenv("DB_USER")
-    pwd = os.getenv("DB_PASSWORD")
-    db_name = os.getenv("LOCAL_DB_NAME" if local else "DB_NAME")
-    host = os.getenv("LOCAL_DB_HOST" if local else "DB_HOST")
-    port = os.getenv("DB_PORT")
-    dsn = f"postgresql://{user}:{pwd}@{host}:{port}/{db_name}"
-    return sql.create_engine(dsn)
+def get_db_connection(local: bool) -> psycopg2.connection:
+    return psycopg2.connect(
+        database=os.getenv("LOCAL_DB_NAME" if local else "DB_NAME"),
+        user=os.getenv("DB_USER"),
+        password=os.getenv("DB_PASSWORD"),
+        host=os.getenv("LOCAL_DB_HOST" if local else "DB_HOST"),
+        port=os.getenv("DB_PORT"),
+    )
 
 
 def datetime_unix_conversion(
@@ -47,3 +47,9 @@ def get_available_redis_streams() -> list:
         all_streams += streams
         if i == 0:
             return all_streams
+
+
+def execute_query(db: psycopg2.connection, query: str):
+    with db.cursor() as cursor:
+        cursor.execute(query)
+        db.commit()
