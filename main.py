@@ -7,6 +7,7 @@ from datetime import datetime as dt
 import pandas as pd
 import psycopg2
 import requests
+import sqlalchemy as sql
 from dotenv import load_dotenv
 
 from utils import helpers
@@ -18,9 +19,7 @@ LOG.setLevel(logging.INFO)
 
 
 class OnStartChecker:
-    def __init__(
-        self, open_orders: dict, db: psycopg2.connection, verbose: bool = True
-    ):
+    def __init__(self, open_orders: dict, db: sql.Engine, verbose: bool = True):
         self.verbose = verbose
         self.open_orders = open_orders
         self.data = dict()
@@ -89,7 +88,9 @@ class OnStartChecker:
             f"update cmetrics_orders set expiration_tmstmp = '{dt.now()}' "
             f"where order_id in ('{order_id_list}') and expiration_tmstmp is null"
         )
-        helpers.execute_query(self.db, query)
+        with self.db.connect() as connection:
+            connection.execute(sql.text(query))
+            connection.commit()
 
     def check_all_open_orders(self):
         if self.verbose:
