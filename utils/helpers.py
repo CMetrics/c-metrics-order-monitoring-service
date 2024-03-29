@@ -1,30 +1,26 @@
 import os
 from datetime import datetime as dt
 
-import aiohttp
 import pandas as pd
 import sqlalchemy as sql
 from dotenv import load_dotenv
+from redis import asyncio as async_redis
 
-BASE_API = "http://127.0.0.1:8000"
-HOST = "localhost"
-BASE_WS = f"ws://{HOST}:"
 load_dotenv()
 
 
-async def async_get(session: aiohttp.ClientSession, url: str, pair: str = None) -> list:
-    async with session.get(url) as response:
-        data = await response.json()
-        if pair:
-            return [pair, data]
-        return data
+REDIS_CON = async_redis.Redis(
+    host=os.environ.get("REDIS_HOST"),
+    port=int(os.environ.get("REDIS_PORT")),
+    decode_responses=True,
+)
 
 
-def get_db_connection() -> sql.Engine:
+def get_db_connection(local: bool) -> sql.Engine:
     user = os.getenv("DB_USER")
-    pwd = os.getenv("POSTGRES_PASSWORD")
-    db_name = os.getenv("DB_NAME")
-    host = os.getenv("DB_HOST")
+    pwd = os.getenv("DB_PASSWORD")
+    db_name = os.getenv("LOCAL_DB_NAME" if local else "DB_NAME")
+    host = os.getenv("LOCAL_DB_HOST" if local else "DB_HOST")
     port = os.getenv("DB_PORT")
     dsn = f"postgresql://{user}:{pwd}@{host}:{port}/{db_name}"
     return sql.create_engine(dsn)
@@ -41,3 +37,13 @@ def datetime_unix_conversion(
             else:
                 df[col] = df[col].apply(lambda x: dt.utcfromtimestamp(x))
     return df
+
+
+def get_available_redis_streams() -> list:
+    i = 0
+    all_streams = list()
+    while True:
+        i, streams = REDIS_CON.scan(i, _type="STREAM", match="{real-time}-trades-*")
+        all_streams += streams
+        if i == 0:
+            return all_streams
