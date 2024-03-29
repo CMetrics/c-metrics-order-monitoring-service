@@ -5,7 +5,6 @@ import uuid
 from datetime import datetime as dt
 
 import pandas as pd
-import psycopg2
 import requests
 import sqlalchemy as sql
 from dotenv import load_dotenv
