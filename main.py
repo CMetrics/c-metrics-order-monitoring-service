@@ -239,7 +239,6 @@ class OrderExecutionService(OnStartChecker):
 
     def check_fills(self, raw_trade_data: dict):
         trade_data = raw_trade_data
-        trade_data = trade_data["trades"]
         trade_pair = trade_data["symbol"]
         trade_pair = trade_pair.replace("-", "/")
         filled_orders = list()
