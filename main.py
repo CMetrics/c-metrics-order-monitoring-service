@@ -244,7 +244,7 @@ class OrderExecutionService(OnStartChecker):
         open_orders_redis_key = "{order-monitoring}-open-orders"
         helpers.REDIS_CON.xadd(
             open_orders_redis_key,
-            self.open_orders,
+            {'open-orders': self.open_orders},
             maxlen=len(self.open_orders),
             approximate=True,
         )
