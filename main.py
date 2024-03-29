@@ -3,6 +3,7 @@ import logging
 import os
 import uuid
 from datetime import datetime as dt
+from multiprocessing import Process
 
 import pandas as pd
 import requests
@@ -79,8 +80,10 @@ class OnStartChecker:
         if execution_tmstmp:
             self.filled_orders[order_id] = execution_tmstmp
 
-    def cancel_previous_records(self):
-        order_id_list = list(self.filled_orders.keys())
+    def cancel_previous_records(self, filled_orders: list):
+        if not filled_orders:
+            filled_orders = self.filled_orders
+        order_id_list = list(filled_orders.keys())
         order_id_list = "','".join(order_id_list)
         query = (
             f"update cmetrics_orders set expiration_tmstmp = '{dt.now()}' "
@@ -97,9 +100,11 @@ class OnStartChecker:
         for order_id in self.open_orders:
             self.check_order(order_id)
 
-    def get_updated_order_rows_df(self) -> pd.DataFrame:
+    def get_updated_order_rows_df(self, filled_orders: list = None) -> pd.DataFrame:
         df = pd.DataFrame()
-        for order_id in self.filled_orders:
+        if not filled_orders:
+            filled_orders = self.filled_orders
+        for order_id in filled_orders:
             order_df = pd.DataFrame([self.open_orders[order_id]])
             order_df["order_id"] = order_id
             df = pd.concat([df, order_df])
@@ -109,8 +114,8 @@ class OnStartChecker:
         df["order_dim_key"] = df.apply(lambda x: str(uuid.uuid4()), axis=1)
         return df
 
-    def add_updated_order_rows(self):
-        orders_df = self.get_updated_order_rows_df()
+    def add_updated_order_rows(self, filled_orders: list = None):
+        orders_df = self.get_updated_order_rows_df(filled_orders)
         orders_df["order_dim_key"] = orders_df.apply(
             lambda x: str(uuid.uuid4()), axis=1
         )
@@ -122,12 +127,12 @@ class OnStartChecker:
             index=False,
         )
 
-    def update_orders(self):
-        self.cancel_previous_records()
-        self.add_updated_order_rows()
+    def update_orders(self, filled_orders: list = None):
+        self.cancel_previous_records(filled_orders)
+        self.add_updated_order_rows(filled_orders)
 
-    def get_trades_df(self) -> pd.DataFrame:
-        updates_orders_df = self.get_updated_order_rows_df()
+    def get_trades_df(self, filled_orders: list = None) -> pd.DataFrame:
+        updates_orders_df = self.get_updated_order_rows_df(filled_orders)
         trades_df = updates_orders_df.drop(
             columns=[
                 "order_dim_key",
@@ -150,8 +155,9 @@ class OnStartChecker:
         )
         return trades_df
 
-    def add_trades(self):
-        trades_df = self.get_trades_df()
+    def add_trades(self, trades_df: pd.DataFrame = None):
+        if trades_df is None:
+            trades_df = self.get_trades_df()
         trades_df.to_sql(
             "cmetrics_trades",
             schema="public",
@@ -176,6 +182,7 @@ class OrderExecutionService(OnStartChecker):
         self.verbose = verbose
         self.db = helpers.get_db_connection(local=False)
         self.orders = self.retrieve_from_db()
+        self.open_orders_redis_key = "{order-monitoring}-open-orders"
         super().__init__(open_orders=self.orders, db=self.db, verbose=verbose)
 
     def retrieve_from_db(self) -> dict:
@@ -191,10 +198,6 @@ class OrderExecutionService(OnStartChecker):
         df.set_index("order_id", inplace=True)
         return df.to_dict(orient="index")
 
-    def retrieve_from_redis(self, user_id: str) -> pd.DataFrame:
-        redis_data = self.redis_client.get(user_id)
-        return pd.DataFrame(json.loads(redis_data))
-
     @staticmethod
     def get_filled_qty(order: pd.Series, trade_data: dict) -> float:
         if (
@@ -207,60 +210,68 @@ class OrderExecutionService(OnStartChecker):
             return min(trade_data["amount"], order["order_volume"])
         return 0
 
-    def handle_fills(self, filled_orders: pd.DataFrame):
-        if not filled_orders.empty:
-            filled_orders["fill_pct"] = filled_orders.apply(
-                lambda x: round(x["filled_qty"] / x["order_volume"], 4), axis=1
-            )
-            filled_orders["order_status"] = filled_orders["fill_pct"].apply(
-                lambda x: "executed" if x == 1 else "part_fill"
-            )
-            filled_orders["insert_tmstmp"] = dt.now()
-            filled_orders["expiration_tmstmp"] = None
-            filled_orders = helpers.datetime_unix_conversion(
-                filled_orders, convert_to="timestamp", cols=["order_creation_tmstmp"]
-            )
-            filled_orders["order_volume"] = filled_orders["filled_qty"]
-            filled_orders.drop(columns="filled_qty", inplace=True)
-            trades_df = self.get_trades_df(filled_orders)
-            self.update_orders(filled_orders)
-            self.add_trades(trades_df)
+    def handle_fills(self, filled_orders: list):
+        if filled_orders:
+            for order in filled_orders:
+                self.open_orders.pop(order["order_id"])
+                order["fill_pct"] = round(
+                    order["filled_qty"] / order["order_volume"], 4
+                )
+                order["order_status"] = (
+                    "executed" if order["fill_pct"] == 1 else "part_fill"
+                )
+                order["insert_tmstmp"] = dt.now()
+                order["expiration_tmstmp"] = None
+                order = helpers.datetime_unix_conversion(
+                    order, convert_to="timestamp", cols=["order_creation_tmstmp"]
+                )
+                order["order_volume"] = order["filled_qty"]
+                order.pop("filled_qty")
+        trades_df = self.get_trades_df(filled_orders)
+        self.update_orders(filled_orders)
+        self.add_trades(trades_df)
+        helpers.REDIS_CON.xadd(
+            self.open_orders_redis_key,
+            {"open-orders": json.dumps(self.open_orders)},
+            maxlen=1,
+            approximate=True,
+        )
 
     def check_fills(self, raw_trade_data: dict):
         trade_data = raw_trade_data
         trade_data = trade_data["trades"]
-        orders = self.retrieve_from_redis("thomasbouamoud")
         trade_pair = trade_data["symbol"]
         trade_pair = trade_pair.replace("-", "/")
-        orders = orders[orders["asset_id"] == trade_pair]
-        orders["filled_qty"] = orders.apply(
-            lambda x: self.get_filled_qty(x, trade_data), axis=1
-        )
-        orders["filled_qty"] = orders["order_volume"]
-        filled_orders = orders[orders["filled_qty"] > 0]
+        filled_orders = list()
+        for order in self.open_orders:
+            if order["asset_id"] == trade_pair:
+                fill_qty = self.get_filled_qty(order, trade_data)
+                if fill_qty:
+                    LOG.info(
+                        f"{order['broker_id']} {order['asset_id']} {order['trading_type']} {order['order_side']} "
+                        f"EXECUTED: {order['order_volume']} @ {order['order_price']}"
+                    )
+                    filled_orders.append(order)
         self.handle_fills(filled_orders)
 
     def run_service(self):
         self.run_on_start_checker()
-        open_orders_redis_key = "{order-monitoring}-open-orders"
         helpers.REDIS_CON.xadd(
-            open_orders_redis_key,
+            self.open_orders_redis_key,
             {"open-orders": json.dumps(self.open_orders)},
-            maxlen=len(self.open_orders),
+            maxlen=1,
             approximate=True,
         )
         all_streams = helpers.get_available_redis_streams()
         streams = {stream: "$" for stream in all_streams}
         while True:
             data = helpers.REDIS_CON.xread(streams=streams, block=0)
-            self.open_orders = helpers.REDIS_CON.xrange(open_orders_redis_key, "-", "+")
+            self.open_orders = helpers.REDIS_CON.xrange(
+                self.open_orders_redis_key, "-", "+"
+            )[0][1]
             message = data[0][1][0][1]
-            for order in self.open_orders:
-                print(order)
-            # Process(target=self.check_fills, args=(message,)).start()
+            Process(target=self.check_fills, args=(message,)).start()
 
-
-#
 
 if __name__ == "__main__":
     oes = OrderExecutionService()
