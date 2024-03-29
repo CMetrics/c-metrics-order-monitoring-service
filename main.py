@@ -267,7 +267,7 @@ class OrderExecutionService(OnStartChecker):
             data = helpers.REDIS_CON.xread(streams=streams, block=0)
             self.open_orders = helpers.REDIS_CON.xrange(
                 self.open_orders_redis_key, "-", "+"
-            )[0][1]
+            )[0][1]['open-orders']
             message = data[0][1][0][1]
             Process(target=self.check_fills, args=(message,)).start()
 
