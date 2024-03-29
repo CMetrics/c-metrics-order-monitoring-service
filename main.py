@@ -242,7 +242,7 @@ class OrderExecutionService(OnStartChecker):
         trade_pair = trade_data["symbol"]
         trade_pair = trade_pair.replace("-", "/")
         filled_orders = list()
-        for order in self.open_orders:
+        for order in self.open_orders.values():
             if order["asset_id"] == trade_pair:
                 fill_qty = self.get_filled_qty(order, trade_data)
                 if fill_qty:
@@ -251,7 +251,8 @@ class OrderExecutionService(OnStartChecker):
                         f"EXECUTED: {order['order_volume']} @ {order['order_price']}"
                     )
                     filled_orders.append(order)
-        self.handle_fills(filled_orders)
+        if filled_orders:
+            self.handle_fills(filled_orders)
 
     def run_service(self):
         self.run_on_start_checker()
@@ -265,9 +266,11 @@ class OrderExecutionService(OnStartChecker):
         streams = {stream: "$" for stream in all_streams}
         while True:
             data = helpers.REDIS_CON.xread(streams=streams, block=0)
-            self.open_orders = helpers.REDIS_CON.xrange(
-                self.open_orders_redis_key, "-", "+"
-            )[0][1]['open-orders']
+            self.open_orders = json.loads(
+                helpers.REDIS_CON.xrange(self.open_orders_redis_key, "-", "+")[0][1][
+                    "open-orders"
+                ]
+            )
             message = data[0][1][0][1]
             Process(target=self.check_fills, args=(message,)).start()
 
