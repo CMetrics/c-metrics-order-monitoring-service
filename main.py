@@ -201,13 +201,13 @@ class OrderExecutionService(OnStartChecker):
     @staticmethod
     def get_filled_qty(order: pd.Series, trade_data: dict) -> float:
         if (
-            order["order_side"] == "buy" and trade_data["price"] < order["order_price"]
+            order["order_side"] == "buy" and float(trade_data["price"]) < order["order_price"]
         ) or (
-            order["order_side"] == "sell" and trade_data["price"] > order["order_price"]
+            order["order_side"] == "sell" and float(trade_data["price"]) > order["order_price"]
         ):
             return order["order_volume"]
-        if trade_data["price"] == order["order_price"]:
-            return min(trade_data["amount"], order["order_volume"])
+        if float(trade_data["price"]) == order["order_price"]:
+            return min(float(trade_data["amount"]), order["order_volume"])
         return 0
 
     def handle_fills(self, filled_orders: list):
@@ -245,12 +245,14 @@ class OrderExecutionService(OnStartChecker):
         for order in self.open_orders.values():
             if order["asset_id"] == trade_pair:
                 fill_qty = self.get_filled_qty(order, trade_data)
+                base_log = f"{order['broker_id']} {order['asset_id']} {order['trading_type']} {order['order_side']} "
                 if fill_qty:
                     LOG.info(
-                        f"{order['broker_id']} {order['asset_id']} {order['trading_type']} {order['order_side']} "
-                        f"EXECUTED: {order['order_volume']} @ {order['order_price']}"
+                        f"{base_log} EXECUTED: {order['order_volume']} @ {order['order_price']}"
                     )
                     filled_orders.append(order)
+                else:
+                    LOG.info(f'NOT EXECUTED: {base_log}')
         if filled_orders:
             self.handle_fills(filled_orders)
 
