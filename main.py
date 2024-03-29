@@ -249,10 +249,10 @@ class OrderExecutionService(OnStartChecker):
             approximate=True,
         )
         all_streams = helpers.get_available_redis_streams()
-        all_streams.append(open_orders_redis_key)
         streams = {stream: "$" for stream in all_streams}
         while True:
             data = helpers.REDIS_CON.xread(streams=streams, block=0)
+            self.open_orders = helpers.REDIS_CON.xrange(open_orders_redis_key, '-', '+')
             message = data[0][1][0][1]
             print(message)
             # Process(target=self.check_fills, args=(message,)).start()
