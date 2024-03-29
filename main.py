@@ -201,9 +201,11 @@ class OrderExecutionService(OnStartChecker):
     @staticmethod
     def get_filled_qty(order: pd.Series, trade_data: dict) -> float:
         if (
-            order["order_side"] == "buy" and float(trade_data["price"]) < order["order_price"]
+            order["order_side"] == "buy"
+            and float(trade_data["price"]) < order["order_price"]
         ) or (
-            order["order_side"] == "sell" and float(trade_data["price"]) > order["order_price"]
+            order["order_side"] == "sell"
+            and float(trade_data["price"]) > order["order_price"]
         ):
             return order["order_volume"]
         if float(trade_data["price"]) == order["order_price"]:
@@ -252,7 +254,15 @@ class OrderExecutionService(OnStartChecker):
                     )
                     filled_orders.append(order)
                 else:
-                    LOG.info(f'NOT EXECUTED: {base_log}')
+                    last_close = float(trade_data["price"])
+                    distance_to_exec = (
+                        last_close / order["order_price"]
+                        if order["order_side"] == "buy"
+                        else order["order_price"] / last_close
+                    ) - 1
+                    LOG.info(
+                        f"{base_log} not executed: {distance_to_exec:.2%} away from target price"
+                    )
         if filled_orders:
             self.handle_fills(filled_orders)
 
