@@ -47,9 +47,8 @@ class OnStartChecker:
     def get_execution_tmstmp(self, order: dict) -> dt:
         pair = order["asset_id"]
         ohlcv_df = self.data[pair]
-        execution_df = ohlcv_df[
-            ohlcv_df["time"] >= dt.timestamp(order["order_creation_tmstmp"]) * 1000
-        ]
+        tmstmp = dt.strptime(order["order_creation_tmstmp"], "%Y-%m-%d %H:%M:%S.%f%z")
+        execution_df = ohlcv_df[ohlcv_df["time"] >= dt.timestamp(tmstmp) * 1000]
         if order["order_side"] == "buy":
             execution_df = execution_df[execution_df["low"] < order["order_price"]]
         else:
@@ -187,7 +186,7 @@ class OrderExecutionService(OnStartChecker):
             "where order_status = 'open' and expiration_tmstmp is null"
         )
         df = pd.read_sql_query(sql=query, con=self.db)
-        for tmstmp_col in ('insert_tmstmp', 'order_creation_tmstmp'):
+        for tmstmp_col in ("insert_tmstmp", "order_creation_tmstmp"):
             df[tmstmp_col] = df[tmstmp_col].astype(str)
         df.set_index("order_id", inplace=True)
         return df.to_dict(orient="index")
@@ -246,7 +245,7 @@ class OrderExecutionService(OnStartChecker):
         open_orders_redis_key = "{order-monitoring}-open-orders"
         helpers.REDIS_CON.xadd(
             open_orders_redis_key,
-            {'open-orders': json.dumps(self.open_orders)},
+            {"open-orders": json.dumps(self.open_orders)},
             maxlen=len(self.open_orders),
             approximate=True,
         )
@@ -254,7 +253,7 @@ class OrderExecutionService(OnStartChecker):
         streams = {stream: "$" for stream in all_streams}
         while True:
             data = helpers.REDIS_CON.xread(streams=streams, block=0)
-            self.open_orders = helpers.REDIS_CON.xrange(open_orders_redis_key, '-', '+')
+            self.open_orders = helpers.REDIS_CON.xrange(open_orders_redis_key, "-", "+")
             message = data[0][1][0][1]
             for order in self.open_orders:
                 print(order)
