@@ -4,12 +4,12 @@ from datetime import datetime as dt
 import pandas as pd
 import sqlalchemy as sql
 from dotenv import load_dotenv
-from redis import asyncio as async_redis
+from redis import Redis
 
 load_dotenv()
 
 
-REDIS_CON = async_redis.Redis(
+REDIS_CON = Redis(
     host=os.environ.get("REDIS_HOST"),
     port=int(os.environ.get("REDIS_PORT")),
     decode_responses=True,
