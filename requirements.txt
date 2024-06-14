@@ -1,6 +1,6 @@
 python-dotenv==1.0.1
 pandas==2.2.2
-redis==5.0.4
+redis==5.0.6
 sqlalchemy==2.0.30
 aiohttp==3.9.5
 websockets==12.0
